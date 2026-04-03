@@ -1,0 +1,184 @@
+# 发布工作流：当推送 v* 标签时自动构建多平台 ZIP 并创建 GitHub Release
+# ZIP 根目录直接放置 .codex 的内容，用户解压到 .codex 目录即可直接使用
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.zip_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            zip_name: codex-stop-notify-windows-x86_64.zip
+            bin_ext: .exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            zip_name: codex-stop-notify-linux-x86_64.zip
+            bin_ext: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            zip_name: codex-stop-notify-macos-x86_64.zip
+            bin_ext: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            zip_name: codex-stop-notify-macos-arm64.zip
+            bin_ext: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: 配置路径脱敏编译参数（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $flags = @(
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE=/workspace",
+            "--remap-path-prefix=$env:USERPROFILE=/user"
+          )
+          if ($env:CARGO_HOME) {
+            $flags += "--remap-path-prefix=$env:CARGO_HOME=/cargo-home"
+          }
+          if ($env:RUSTUP_HOME) {
+            $flags += "--remap-path-prefix=$env:RUSTUP_HOME=/rustup-home"
+          }
+          "RUSTFLAGS=$($flags -join ' ')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: 配置路径脱敏编译参数（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          flags=(
+            "--remap-path-prefix=$GITHUB_WORKSPACE=/workspace"
+            "--remap-path-prefix=$HOME=/user"
+          )
+          if [ -n "${CARGO_HOME:-}" ]; then
+            flags+=("--remap-path-prefix=$CARGO_HOME=/cargo-home")
+          fi
+          if [ -n "${RUSTUP_HOME:-}" ]; then
+            flags+=("--remap-path-prefix=$RUSTUP_HOME=/rustup-home")
+          fi
+          printf 'RUSTFLAGS=%s\n' "${flags[*]}" >> "$GITHUB_ENV"
+
+      - name: 运行测试
+        if: matrix.target != 'aarch64-apple-darwin'
+        run: cargo test --locked --verbose
+
+      - name: 构建 Release 二进制
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      # ZIP 内部目录结构（直接解压到 ~/.codex/ 或 %USERPROFILE%\.codex\）:
+      #   config.toml.example
+      #   notify/
+      #   ├── codex-stop-notify[.exe]
+      #   └── codex-stop-notif.env.example
+
+      - name: 打包 ZIP（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $notifyDir = "dist\notify"
+          New-Item -ItemType Directory -Force -Path $notifyDir | Out-Null
+          Copy-Item "target\${{ matrix.target }}\release\codex-stop-notify.exe" $notifyDir
+          Copy-Item "hooks\codex-stop-notif\codex-stop-notif.env.example"         $notifyDir
+          Copy-Item "hooks\codex-config.toml.example"                              "dist\config.toml.example"
+          Compress-Archive -Path "dist\*" -DestinationPath "${{ matrix.zip_name }}"
+          $hash = (Get-FileHash "${{ matrix.zip_name }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.zip_name }}" | Out-File -Encoding ascii "${{ matrix.zip_name }}.sha256"
+
+      - name: 打包 ZIP（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/notify
+          cp "target/${{ matrix.target }}/release/codex-stop-notify" \
+             dist/notify/
+          chmod 755 dist/notify/codex-stop-notify
+          cp hooks/codex-stop-notif/codex-stop-notif.env.example \
+             dist/notify/
+          cp hooks/codex-config.toml.example dist/config.toml.example
+          cd dist && zip -r ../${{ matrix.zip_name }} .
+          cd ..
+          # macOS 没有 sha256sum，使用 shasum -a 256 兼容
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "${{ matrix.zip_name }}" > "${{ matrix.zip_name }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.zip_name }}" > "${{ matrix.zip_name }}.sha256"
+          fi
+
+      - name: 校验 ZIP 目录结构
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $entries = [System.IO.Compression.ZipFile]::OpenRead("${{ matrix.zip_name }}").Entries |
+            Select-Object -ExpandProperty FullName
+          $entries | ForEach-Object { Write-Output $_ }
+          if ($entries | Where-Object { $_ -like '.codex/*' -or $_ -eq '.codex/' }) {
+            throw "ZIP 不应包含 .codex 外层目录"
+          }
+          if (-not ($entries -contains 'config.toml.example')) {
+            throw "ZIP 缺少 config.toml.example"
+          }
+          if (-not ($entries | Where-Object { $_ -like 'notify/*' })) {
+            throw "ZIP 缺少 notify 目录内容"
+          }
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip_name }}
+          path: |
+            ${{ matrix.zip_name }}
+            ${{ matrix.zip_name }}.sha256
+
+  release:
+    name: 创建 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: 汇总 SHA256 校验文件
+        run: |
+          cat *.sha256 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            *.zip
+            *.sha256
+            SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

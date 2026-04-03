@@ -1,0 +1,17 @@
+# 将本段合并到 ~/.codex/config.toml 或项目内 .codex/config.toml
+# 推荐使用环境变量路径，避免把用户名写死在配置里
+
+notify = [
+  "pwsh",
+  "-NoProfile",
+  "-CommandWithArgs",
+  '& "$env:USERPROFILE\.codex\notify\codex-stop-notify.exe" --env-file "$env:USERPROFILE\.codex\notify\codex-stop-notif.env" $args[0]'
+]
+
+# Linux / macOS 示例：
+# notify = [
+#   "sh",
+#   "-lc",
+#   '"$HOME/.codex/notify/codex-stop-notify" --env-file "$HOME/.codex/notify/codex-stop-notif.env" "$1"',
+#   "codex-notify-shell"
+# ]
