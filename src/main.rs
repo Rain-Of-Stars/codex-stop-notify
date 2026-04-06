@@ -110,7 +110,11 @@ fn process_codex_notification(
     input: &event::CodexNotifyInput,
 ) -> Result<(), String> {
     if !event::should_process_codex(input) {
-        eprintln!("[codex-stop-notify] 跳过 Codex 事件: {}", input.event_type);
+        let reason = event::codex_skip_reason(input).unwrap_or("未命中发送条件");
+        eprintln!(
+            "[codex-stop-notify] 跳过 Codex 事件: {} ({})",
+            input.event_type, reason
+        );
         return Ok(());
     }
 

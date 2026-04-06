@@ -112,7 +112,7 @@ pub fn should_process(input: &HookInput) -> Result<bool, String> {
 
 /// 判断是否应处理 Codex notify 事件
 pub fn should_process_codex(input: &CodexNotifyInput) -> bool {
-    input.event_type == "agent-turn-complete"
+    codex_skip_reason(input).is_none()
 }
 
 /// 将 Codex notify 事件转为邮件展示所需的轮次列表
@@ -164,6 +164,55 @@ pub fn build_codex_dedup_key(input: &CodexNotifyInput) -> Option<String> {
         (None, Some(turn)) => Some(format!("codex-turn:{}", turn)),
         (None, None) => None,
     }
+}
+
+/// 判断是否为 Codex 会话初始化阶段的内部标题生成轮次
+fn is_internal_title_generation_turn(input: &CodexNotifyInput) -> bool {
+    let messages: Vec<&str> = input
+        .input_messages
+        .iter()
+        .map(|message| message.trim())
+        .filter(|message| !message.is_empty())
+        .collect();
+
+    if messages.len() != 1 {
+        return false;
+    }
+
+    let prompt = messages[0];
+    let has_internal_prompt_signature = prompt.contains("You are a helpful assistant.")
+        && prompt.contains("Generate a concise UI title")
+        && prompt.contains("Return only the title")
+        && prompt.contains("User prompt:");
+
+    if !has_internal_prompt_signature {
+        return false;
+    }
+
+    input
+        .last_assistant_message
+        .as_deref()
+        .map(str::trim)
+        .map(|message| {
+            message.starts_with('{')
+                && message.ends_with('}')
+                && message.contains("\"title\"")
+                && !message.contains('\n')
+        })
+        .unwrap_or(false)
+}
+
+/// 返回 Codex notify 事件跳过原因
+pub fn codex_skip_reason(input: &CodexNotifyInput) -> Option<&'static str> {
+    if input.event_type != "agent-turn-complete" {
+        return Some("仅处理 agent-turn-complete 事件");
+    }
+
+    if is_internal_title_generation_turn(input) {
+        return Some("检测到会话初始化阶段的内部标题生成轮次");
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -299,6 +348,41 @@ mod tests {
         };
 
         assert!(!should_process_codex(&input));
+    }
+
+    #[test]
+    fn test_should_skip_internal_title_generation_codex_event() {
+        let input = CodexNotifyInput {
+            event_type: "agent-turn-complete".to_string(),
+            thread_id: Some("thread-123".to_string()),
+            turn_id: Some("turn-456".to_string()),
+            cwd: Some("D:/workspace".to_string()),
+            input_messages: vec![r#"You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title for a task that will be created from that prompt.
+Generate a concise UI title (18-36 characters) for this task.
+Return only the title. No quotes or trailing punctuation.
+User prompt:
+检查编译后的exe 启动缓慢 性能异常 图标没有正确应用 修复bug"#
+                .to_string()],
+            last_assistant_message: Some(
+                r#"{"title":"修复编译后exe启动缓慢、性能异常与图标异常"}"#.to_string(),
+            ),
+        };
+
+        assert!(!should_process_codex(&input));
+    }
+
+    #[test]
+    fn test_should_not_skip_normal_title_request_from_user() {
+        let input = CodexNotifyInput {
+            event_type: "agent-turn-complete".to_string(),
+            thread_id: Some("thread-123".to_string()),
+            turn_id: Some("turn-456".to_string()),
+            cwd: Some("D:/workspace".to_string()),
+            input_messages: vec!["请帮我为这个需求生成一个简短标题".to_string()],
+            last_assistant_message: Some("建议标题：修复启动性能问题".to_string()),
+        };
+
+        assert!(should_process_codex(&input));
     }
 
     #[test]

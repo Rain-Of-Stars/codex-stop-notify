@@ -473,3 +473,28 @@ fn test_event_all_types_filtered() {
         }
     }
 }
+
+#[test]
+fn test_codex_notify_skips_internal_title_generation_turn() {
+    let input = notify::event::CodexNotifyInput {
+        event_type: "agent-turn-complete".to_string(),
+        thread_id: Some("019d62b2-e0b".to_string()),
+        turn_id: Some("turn-title-bootstrap".to_string()),
+        cwd: Some("D:\\Github_project\\codex-stop-notify".to_string()),
+        input_messages: vec![r#"You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title for a task that will be created from that prompt.
+The tasks typically have to do with coding-related tasks.
+Generate a concise UI title (18-36 characters) for this task.
+Return only the title. No quotes or trailing punctuation.
+User prompt:
+检查编译后的exe 启动缓慢 性能异常 图标没有正确应用 修复bug"#
+            .to_string()],
+        last_assistant_message: Some(
+            r#"{"title":"修复编译后exe启动缓慢、性能异常与图标异常"}"#.to_string(),
+        ),
+    };
+
+    assert!(
+        !notify::event::should_process_codex(&input),
+        "会话初始化阶段的内部标题生成轮次不应触发邮件"
+    );
+}

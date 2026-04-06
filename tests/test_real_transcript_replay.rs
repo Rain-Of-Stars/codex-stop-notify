@@ -1,7 +1,7 @@
 // 真实 transcript 前缀回放测试：用于发现同一轮用户请求尚未结束时的提前 ready
 
-use codex_stop_notify::transcript::parse_transcript_snapshot;
 use codex_stop_notify::redact::summarize_path_for_display;
+use codex_stop_notify::transcript::parse_transcript_snapshot;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
