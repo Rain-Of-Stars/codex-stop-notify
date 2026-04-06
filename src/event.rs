@@ -202,6 +202,16 @@ fn is_internal_title_generation_turn(input: &CodexNotifyInput) -> bool {
         .unwrap_or(false)
 }
 
+/// 判断是否为子智能体的收尾轮次
+fn is_subagent_final_answer_turn(input: &CodexNotifyInput) -> bool {
+    input
+        .last_assistant_message
+        .as_deref()
+        .map(str::trim)
+        .map(|message| message.contains("<final_answer>") && message.ends_with("</final_answer>"))
+        .unwrap_or(false)
+}
+
 /// 返回 Codex notify 事件跳过原因
 pub fn codex_skip_reason(input: &CodexNotifyInput) -> Option<&'static str> {
     if input.event_type != "agent-turn-complete" {
@@ -210,6 +220,10 @@ pub fn codex_skip_reason(input: &CodexNotifyInput) -> Option<&'static str> {
 
     if is_internal_title_generation_turn(input) {
         return Some("检测到会话初始化阶段的内部标题生成轮次");
+    }
+
+    if is_subagent_final_answer_turn(input) {
+        return Some("检测到子智能体 final_answer 收尾轮次");
     }
 
     None
@@ -380,6 +394,42 @@ User prompt:
             cwd: Some("D:/workspace".to_string()),
             input_messages: vec!["请帮我为这个需求生成一个简短标题".to_string()],
             last_assistant_message: Some("建议标题：修复启动性能问题".to_string()),
+        };
+
+        assert!(should_process_codex(&input));
+    }
+
+    #[test]
+    fn test_should_skip_subagent_final_answer_codex_event() {
+        let input = CodexNotifyInput {
+            event_type: "agent-turn-complete".to_string(),
+            thread_id: Some("thread-123".to_string()),
+            turn_id: Some("turn-456".to_string()),
+            cwd: Some("D:/workspace".to_string()),
+            input_messages: vec!["请子智能体先检索 release workflow".to_string()],
+            last_assistant_message: Some(
+                "搜索结果如下...\n<final_answer>\n相关文件列表\n</final_answer>".to_string(),
+            ),
+        };
+
+        assert!(!should_process_codex(&input));
+        assert_eq!(
+            codex_skip_reason(&input),
+            Some("检测到子智能体 final_answer 收尾轮次")
+        );
+    }
+
+    #[test]
+    fn test_should_not_skip_when_only_mentions_final_answer_tag() {
+        let input = CodexNotifyInput {
+            event_type: "agent-turn-complete".to_string(),
+            thread_id: Some("thread-123".to_string()),
+            turn_id: Some("turn-456".to_string()),
+            cwd: Some("D:/workspace".to_string()),
+            input_messages: vec!["解释一下 final_answer 标签是什么意思".to_string()],
+            last_assistant_message: Some(
+                "这里提到了 </final_answer> 这个标签，但不是子智能体结果".to_string(),
+            ),
         };
 
         assert!(should_process_codex(&input));

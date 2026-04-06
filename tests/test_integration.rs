@@ -498,3 +498,22 @@ User prompt:
         "会话初始化阶段的内部标题生成轮次不应触发邮件"
     );
 }
+
+#[test]
+fn test_codex_notify_skips_subagent_final_answer_turn() {
+    let input = notify::event::CodexNotifyInput {
+        event_type: "agent-turn-complete".to_string(),
+        thread_id: Some("019d62b2-e0b".to_string()),
+        turn_id: Some("turn-subagent-final".to_string()),
+        cwd: Some("D:\\Github_project\\codex-stop-notify".to_string()),
+        input_messages: vec!["请子智能体先分析启动慢的原因".to_string()],
+        last_assistant_message: Some(
+            "搜索结果如下...\n<final_answer>\n已整理候选文件\n</final_answer>".to_string(),
+        ),
+    };
+
+    assert!(
+        !notify::event::should_process_codex(&input),
+        "子智能体 final_answer 收尾轮次不应触发邮件"
+    );
+}
