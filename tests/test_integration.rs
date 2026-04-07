@@ -517,3 +517,23 @@ fn test_codex_notify_skips_subagent_final_answer_turn() {
         "子智能体 final_answer 收尾轮次不应触发邮件"
     );
 }
+
+#[test]
+fn test_codex_notify_skips_real_subagent_notification_turn() {
+    let input = notify::event::CodexNotifyInput {
+        event_type: "agent-turn-complete".to_string(),
+        thread_id: Some("019d63a5-db9c-7712-bf41-265ff1d49cbf".to_string()),
+        turn_id: Some("turn-subagent-notification".to_string()),
+        cwd: Some("D:\\Github_project\\codex-stop-notify".to_string()),
+        input_messages: vec![r#"<subagent_notification>
+{"agent_path":"019d63a7-fdfa-7e83-821f-5742a68f6463","status":{"completed":"已整理候选文件"}}
+</subagent_notification>"#
+            .to_string()],
+        last_assistant_message: Some("收到子智能体结果，继续主流程。".to_string()),
+    };
+
+    assert!(
+        !notify::event::should_process_codex(&input),
+        "真实 subagent_notification 轮次不应触发邮件"
+    );
+}

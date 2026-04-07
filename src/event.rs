@@ -202,6 +202,26 @@ fn is_internal_title_generation_turn(input: &CodexNotifyInput) -> bool {
         .unwrap_or(false)
 }
 
+/// 判断是否为主会话中注入的子智能体完成通知轮次
+fn is_subagent_notification_turn(input: &CodexNotifyInput) -> bool {
+    let messages: Vec<&str> = input
+        .input_messages
+        .iter()
+        .map(|message| message.trim())
+        .filter(|message| !message.is_empty())
+        .collect();
+
+    if messages.len() != 1 {
+        return false;
+    }
+
+    let message = messages[0];
+    message.starts_with("<subagent_notification>")
+        && message.ends_with("</subagent_notification>")
+        && message.contains("\"agent_path\"")
+        && message.contains("\"status\"")
+}
+
 /// 判断是否为子智能体的收尾轮次
 fn is_subagent_final_answer_turn(input: &CodexNotifyInput) -> bool {
     input
@@ -220,6 +240,10 @@ pub fn codex_skip_reason(input: &CodexNotifyInput) -> Option<&'static str> {
 
     if is_internal_title_generation_turn(input) {
         return Some("检测到会话初始化阶段的内部标题生成轮次");
+    }
+
+    if is_subagent_notification_turn(input) {
+        return Some("检测到主会话中的子智能体完成通知轮次");
     }
 
     if is_subagent_final_answer_turn(input) {
@@ -430,6 +454,41 @@ User prompt:
             last_assistant_message: Some(
                 "这里提到了 </final_answer> 这个标签，但不是子智能体结果".to_string(),
             ),
+        };
+
+        assert!(should_process_codex(&input));
+    }
+
+    #[test]
+    fn test_should_skip_subagent_notification_codex_event() {
+        let input = CodexNotifyInput {
+            event_type: "agent-turn-complete".to_string(),
+            thread_id: Some("thread-123".to_string()),
+            turn_id: Some("turn-456".to_string()),
+            cwd: Some("D:/workspace".to_string()),
+            input_messages: vec![r#"<subagent_notification>
+{"agent_path":"019d63a7-fdfa-7e83-821f-5742a68f6463","status":{"completed":"已整理候选文件"}}
+</subagent_notification>"#
+                .to_string()],
+            last_assistant_message: Some("收到子智能体结果，继续主流程。".to_string()),
+        };
+
+        assert!(!should_process_codex(&input));
+        assert_eq!(
+            codex_skip_reason(&input),
+            Some("检测到主会话中的子智能体完成通知轮次")
+        );
+    }
+
+    #[test]
+    fn test_should_not_skip_when_user_mentions_subagent_notification_text() {
+        let input = CodexNotifyInput {
+            event_type: "agent-turn-complete".to_string(),
+            thread_id: Some("thread-123".to_string()),
+            turn_id: Some("turn-456".to_string()),
+            cwd: Some("D:/workspace".to_string()),
+            input_messages: vec!["请解释 <subagent_notification> 这个标签的作用".to_string()],
+            last_assistant_message: Some("这是系统内部通知标签。".to_string()),
         };
 
         assert!(should_process_codex(&input));

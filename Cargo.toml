@@ -1,6 +1,6 @@
 [package]
 name = "codex-stop-notify"
-version = "2.0.8"
+version = "2.0.9"
 edition = "2021"
 description = "Codex 任务结束后自动发送邮件通知"
 
